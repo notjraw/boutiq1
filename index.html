@@ -3,23 +3,27 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>3D Driving Game — Hellcat</title>
+  <title>3D Driving Game — Hellcat (Fixed)</title>
   <style>
-    html,body{height:100%;margin:0;background:#111;color:#eee;font-family:Inter,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
-    #container{width:100%;height:100%;overflow:hidden;display:block}
-    #ui{position:fixed;left:12px;top:12px;z-index:5;backdrop-filter:blur(6px);padding:8px 12px;border-radius:8px;background:rgba(0,0,0,0.35);box-shadow:0 6px 24px rgba(0,0,0,0.5)}
-    #instructions{position:fixed;right:12px;bottom:12px;z-index:5;background:rgba(0,0,0,0.25);padding:8px 12px;border-radius:8px}
+    html,body{height:100%;margin:0;background:#0b0b0b;color:#eee;font-family:Inter,system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial}
+    #container{width:100%;height:100%;overflow:hidden;display:block;position:relative}
+    canvas{display:block}
+    #ui{position:fixed;left:12px;top:12px;z-index:10;backdrop-filter:blur(6px);padding:10px 14px;border-radius:8px;background:rgba(0,0,0,0.45);box-shadow:0 6px 24px rgba(0,0,0,0.6)}
+    #instructions{position:fixed;right:12px;bottom:12px;z-index:10;background:rgba(0,0,0,0.25);padding:8px 12px;border-radius:8px}
     .btn{appearance:none;border:0;background:#2b2b2b;color:#fff;padding:6px 10px;border-radius:6px;cursor:pointer}
+    #debug{position:fixed;left:12px;bottom:12px;z-index:11;background:rgba(0,0,0,0.55);padding:8px 10px;border-radius:8px;font-family:monospace;font-size:13px;max-width:40vw;white-space:pre-wrap}
   </style>
 </head>
 <body>
   <div id="container"></div>
+
   <div id="ui">
     <div style="font-weight:700">3D Driving — Hellcat</div>
     <div id="speed">Speed: 0 km/h</div>
     <div id="lap" style="opacity:.8;font-size:13px">Position: free roam</div>
     <div style="margin-top:8px"><button id="reset" class="btn">Reset</button></div>
   </div>
+
   <div id="instructions">
     <div><strong>Controls</strong></div>
     <div>W / ↑ : accelerate</div>
@@ -29,128 +33,249 @@
     <div>Space : handbrake</div>
   </div>
 
-  <!-- This version uses Three.js as an ES module and loads a glTF car model named assets/hellcat.glb -->
-  <!-- Place your model at /assets/hellcat.glb in the repo. If you want me to add a model, upload it to the canvas or tell me where to fetch it. -->
+  <div id="debug" aria-live="polite">Starting...</div>
 
-  <script type="module">
-  import * as THREE from 'https://unpkg.com/three@0.152.2/build/three.module.js';
-  import { GLTFLoader } from 'https://unpkg.com/three@0.152.2/examples/jsm/loaders/GLTFLoader.js';
+  <!-- Use non-module builds to avoid MIME/import issues on static hosts -->
+  <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.152.2/examples/js/loaders/GLTFLoader.js"></script>
 
+  <script>
+  // Short helper to write debug messages
+  const dbg = (t) => { const el = document.getElementById('debug'); el.textContent = t; console.log('[DBG]', t); };
+
+  // WebGL check
+  if (!window.WebGLRenderingContext) {
+    dbg('WebGL not supported in this browser — try a modern browser (Chrome/Edge/Firefox).');
+  }
+
+  // DOM refs
   const container = document.getElementById('container');
   const speedEl = document.getElementById('speed');
+  const debugEl = document.getElementById('debug');
   const resetBtn = document.getElementById('reset');
 
-  const renderer = new THREE.WebGLRenderer({antialias:true});
-  renderer.setPixelRatio(window.devicePixelRatio);
+  // Renderer
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.outputEncoding = THREE.sRGBEncoding;
+  renderer.setClearColor(0x87ceeb); // sky color so blank screen is not black
+  renderer.shadowMap.enabled = true;
   container.appendChild(renderer.domElement);
 
+  // Scene & camera
   const scene = new THREE.Scene();
   scene.background = new THREE.Color(0x87ceeb);
 
-  const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.1, 2000);
-  camera.position.set(0,5,-12);
-  camera.lookAt(0,0,0);
+  const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 2000);
+  camera.position.set(0, 5, -12);
+  camera.lookAt(0, 0, 0);
 
-  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.8);
-  hemi.position.set(0,50,0);
+  // Lights
+  const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 0.9);
+  hemi.position.set(0, 50, 0);
   scene.add(hemi);
-  const dir = new THREE.DirectionalLight(0xffffff, 0.6);
-  dir.position.set(5,10,2);
+
+  const dir = new THREE.DirectionalLight(0xffffff, 0.7);
+  dir.position.set(5, 10, 2);
+  dir.castShadow = true;
+  dir.shadow.camera.top = 20;
+  dir.shadow.camera.bottom = -20;
+  dir.shadow.camera.left = -20;
+  dir.shadow.camera.right = 20;
   scene.add(dir);
 
-  const groundGeo = new THREE.PlaneGeometry(200,200);
-  const groundMat = new THREE.MeshStandardMaterial({color:0x2b7a2b,roughness:0.9});
+  // Ground
+  const groundGeo = new THREE.PlaneGeometry(600, 600);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x2b7a2b, roughness: 0.95 });
   const ground = new THREE.Mesh(groundGeo, groundMat);
-  ground.rotation.x = -Math.PI/2;
+  ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  // simple road
+  // Road for orientation
   const road = new THREE.Group();
-  const roadMat = new THREE.MeshStandardMaterial({color:0x333333,metalness:0.1,roughness:0.9});
-  for(let i=0;i<40;i++){
-    const seg = new THREE.Mesh(new THREE.BoxGeometry(6,0.05,6), roadMat);
-    seg.position.set(Math.sin(i*0.2)*20, 0.01, i*4 - 60);
-    seg.rotation.y = Math.sin(i*0.2)*0.25;
+  const roadMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.05, roughness: 0.95 });
+  for (let i = 0; i < 80; i++) {
+    const seg = new THREE.Mesh(new THREE.BoxGeometry(8, 0.05, 6), roadMat);
+    seg.position.set(Math.sin(i * 0.12) * 80, 0.01, i * 6 - 200);
+    seg.rotation.y = Math.sin(i * 0.12) * 0.15;
+    seg.receiveShadow = true;
     road.add(seg);
   }
   scene.add(road);
 
-  // placeholder car group; will be replaced by GLTF model when loaded
+  // Placeholder car (visible even if model fails)
   const car = new THREE.Group();
-  const body = new THREE.Mesh(new THREE.BoxGeometry(1.8,0.6,4), new THREE.MeshStandardMaterial({color:0xff3333,metalness:0.2,roughness:0.6}));
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.6, 4), new THREE.MeshStandardMaterial({ color: 0xff3333, metalness: 0.2, roughness: 0.6 }));
   body.position.y = 0.6;
+  body.castShadow = true;
   car.add(body);
-  car.position.set(0,0,0);
+  car.position.set(0, 0, 0);
   scene.add(car);
 
-  // Try to load assets/hellcat.glb
-  const loader = new GLTFLoader();
-  loader.load('/assets/hellcat.glb', (gltf)=>{
-    // remove placeholder body
-    car.clear();
-    const model = gltf.scene || gltf.scenes[0];
-    model.traverse((c)=>{ if(c.isMesh){ c.castShadow = true; c.receiveShadow = true; } });
-    // scale & center model if necessary
-    const box = new THREE.Box3().setFromObject(model);
-    const size = new THREE.Vector3(); box.getSize(size);
-    const maxDim = Math.max(size.x, size.y, size.z);
-    const scale = 3.5 / maxDim; // tune if model is big/small
-    model.scale.setScalar(scale);
-    // adjust model origin so wheels sit near y=0
-    box.setFromObject(model);
-    const center = new THREE.Vector3(); box.getCenter(center);
-    model.position.sub(center);
-    // nudge up
-    model.position.y += 0.35;
+  // small debug object (spinning cube) to ensure rendering works
+  const cube = new THREE.Mesh(new THREE.BoxGeometry(1,1,1), new THREE.MeshStandardMaterial({color:0x4444ff}));
+  cube.position.set(6,1,-10);
+  cube.castShadow = true;
+  scene.add(cube);
 
-    car.add(model);
-    console.log('Hellcat model loaded');
-  }, undefined, (err)=>{
-    console.warn('Could not load /assets/hellcat.glb — make sure the file exists in the repo at /assets/hellcat.glb', err);
-  });
-
-  // obstacles
-  const boxMat = new THREE.MeshStandardMaterial({color:0x8b5a2b});
-  for(let i=0;i<10;i++){
-    const b = new THREE.Mesh(new THREE.BoxGeometry(2,2,2), boxMat);
-    b.position.set((Math.random()-0.5)*60,1,(Math.random()*120)-60);
+  // Obstacles
+  const boxMat = new THREE.MeshStandardMaterial({ color: 0x8b5a2b });
+  for (let i = 0; i < 12; i++) {
+    const b = new THREE.Mesh(new THREE.BoxGeometry(2, 2, 2), boxMat);
+    b.position.set((Math.random() - 0.5) * 120, 1, (Math.random() * 240) - 120);
+    b.receiveShadow = true;
+    b.castShadow = true;
     scene.add(b);
   }
 
+  // Physics-ish game state
   const state = {
-    speed:0,
-    maxSpeed:40,
-    accel:30,
-    brake:60,
-    friction:8,
-    steerAngle:0,
-    maxSteer:Math.PI/6,
-    steerSpeed:2.5,
-    velocity: new THREE.Vector3(0,0,0)
+    speed: 0,
+    maxSpeed: 40,
+    accel: 30,
+    brake: 60,
+    friction: 8,
+    steerAngle: 0,
+    maxSteer: Math.PI / 6,
+    steerSpeed: 3.0
   };
-  const keys = {forward:false,back:false,left:false,right:false,brake:false};
+  const keys = { forward: false, back: false, left: false, right: false, brake: false };
 
-  function updateControls(dt){
-    const forwardInput = keys.forward ? 1:0;
-    const backInput = keys.back ? 1:0;
-    if(forwardInput){ state.speed += state.accel * dt; }
-    if(backInput){ state.speed -= state.brake * dt; }
-    if(!forwardInput && !backInput){ if(state.speed>0){ state.speed -= state.friction * dt; if(state.speed<0) state.speed=0; } else if(state.speed<0){ state.speed += state.friction * dt; if(state.speed>0) state.speed=0; } }
-    if(state.speed>state.maxSpeed) state.speed = state.maxSpeed;
-    if(state.speed < -state.maxSpeed*0.4) state.speed = -state.maxSpeed*0.4;
-    const leftInput = keys.left ? 1:0;
-    const rightInput = keys.right ? 1:0;
-    const steerTarget = (rightInput - leftInput) * state.maxSteer * (1 - Math.abs(state.speed)/state.maxSpeed);
+  function updateControls(dt) {
+    const forwardInput = keys.forward ? 1 : 0;
+    const backInput = keys.back ? 1 : 0;
+
+    if (forwardInput) state.speed += state.accel * dt;
+    if (backInput) state.speed -= state.brake * dt;
+
+    if (!forwardInput && !backInput) {
+      if (state.speed > 0) { state.speed -= state.friction * dt; if (state.speed < 0) state.speed = 0; }
+      else if (state.speed < 0) { state.speed += state.friction * dt; if (state.speed > 0) state.speed = 0; }
+    }
+
+    if (state.speed > state.maxSpeed) state.speed = state.maxSpeed;
+    if (state.speed < -state.maxSpeed * 0.4) state.speed = -state.maxSpeed * 0.4;
+
+    const leftInput = keys.left ? 1 : 0;
+    const rightInput = keys.right ? 1 : 0;
+    const steerTarget = (rightInput - leftInput) * state.maxSteer * (1 - Math.abs(state.speed) / state.maxSpeed);
     state.steerAngle += (steerTarget - state.steerAngle) * Math.min(1, state.steerSpeed * dt);
+
     const turningRadiusFactor = 0.02;
     car.rotation.y += state.speed * state.steerAngle * turningRadiusFactor * dt;
-    const forward = new THREE.Vector3(0,0,1).applyAxisAngle(new THREE.Vector3(0,1,0), car.rotation.y).normalize();
+
+    const forward = new THREE.Vector3(0, 0, 1).applyAxisAngle(new THREE.Vector3(0, 1, 0), car.rotation.y).normalize();
     car.position.addScaledVector(forward, -state.speed * dt);
+
     body.rotation.z = -state.steerAngle * 0.25;
-    const camOffset = new THREE.Vector3(0,4,-9).applyAxisAngle(new THREE.Vector3(0,1,0), car.rotation.y);
+
+    const camOffset = new THREE.Vector3(0, 4, -9).applyAxisAngle(new THREE.Vector3(0, 1, 0), car.rotation.y);
     const desiredCamPos = new THREE.Vector3().copy(car.position).add(camOffset);
     camera.position.lerp(desiredCamPos, Math.min(1, 5 * dt));
-    const lookAt = new THREE.Vector3(
+    const lookAt = new THREE.Vector3().copy(car.position).add(new THREE.Vector3(0, 1.2, 0));
+    camera.lookAt(lookAt);
+
+    speedEl.textContent = `Speed: ${Math.round(state.speed * 3.6)} km/h`;
+  }
+
+  // Input
+  window.addEventListener('keydown', (e) => {
+    if (e.code === 'KeyW' || e.code === 'ArrowUp') keys.forward = true;
+    if (e.code === 'KeyS' || e.code === 'ArrowDown') keys.back = true;
+    if (e.code === 'KeyA' || e.code === 'ArrowLeft') keys.left = true;
+    if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.right = true;
+    if (e.code === 'Space') keys.brake = true;
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'KeyW' || e.code === 'ArrowUp') keys.forward = false;
+    if (e.code === 'KeyS' || e.code === 'ArrowDown') keys.back = false;
+    if (e.code === 'KeyA' || e.code === 'ArrowLeft') keys.left = false;
+    if (e.code === 'KeyD' || e.code === 'ArrowRight') keys.right = false;
+    if (e.code === 'Space') keys.brake = false;
+  });
+
+  resetBtn.addEventListener('click', () => {
+    car.position.set(0, 0, 0);
+    car.rotation.set(0, 0, 0);
+    state.speed = 0;
+  });
+
+  // Resize
+  function onResize() {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  }
+  window.addEventListener('resize', onResize, false);
+
+  // GLTF loader: attempt to load /assets/hellcat.glb, but don't break if it fails
+  (function tryLoadModel() {
+    if (typeof THREE.GLTFLoader !== 'function' && !THREE.GLTFLoader) {
+      dbg('GLTFLoader not found. Using placeholder car. (This is OK.)');
+      return;
+    }
+
+    const loader = new THREE.GLTFLoader();
+
+    // show positive loading message while fetching
+    dbg('Attempting to load /assets/hellcat.glb ...');
+
+    loader.load('/assets/hellcat.glb',
+      function (gltf) {
+        dbg('Model loaded: applying Hellcat model.');
+        // remove placeholder meshes in the car group
+        while (car.children.length) car.remove(car.children[0]);
+
+        const model = gltf.scene || gltf.scenes[0];
+        model.traverse((c) => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; } });
+
+        // normalize scale and center
+        const box = new THREE.Box3().setFromObject(model);
+        const size = box.getSize(new THREE.Vector3());
+        const maxDim = Math.max(size.x, size.y, size.z) || 1;
+        const scale = 3.0 / maxDim;
+        model.scale.setScalar(scale);
+
+        // center model on origin and raise slightly
+        box.setFromObject(model);
+        const center = box.getCenter(new THREE.Vector3());
+        model.position.sub(center);
+        model.position.y += 0.35;
+
+        car.add(model);
+      },
+      function (xhr) {
+        // progress (optional)
+        dbg('Loading Hellcat model: ' + (xhr.loaded / (xhr.total || 1) * 100).toFixed(0) + '%');
+      },
+      function (err) {
+        dbg('Could not load /assets/hellcat.glb — continuing with placeholder car. See console for details.');
+        console.warn('GLTF load error:', err);
+      }
+    );
+  })();
+
+  // Main loop
+  let last = performance.now();
+  function animate(t) {
+    const now = t;
+    const dt = Math.min(0.05, (now - last) / 1000);
+    last = now;
+
+    // rotate cube so user sees something if the car/model isn't visible
+    cube.rotation.x += dt * 0.6;
+    cube.rotation.y += dt * 0.9;
+
+    updateControls(dt);
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
+  requestAnimationFrame(animate);
+
+  // Final ready message
+  dbg('Renderer started. If you see only black: check browser console for WebGL/load errors. Model path: /assets/hellcat.glb');
+  </script>
+</body>
+</html>
